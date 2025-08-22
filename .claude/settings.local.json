@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sqlc:*)",
+      "Bash(go build:*)",
+      "Bash(gh:*)",
+      "Bash(go test:*)",
+      "Bash(go get:*)",
+      "Bash(go mod:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
