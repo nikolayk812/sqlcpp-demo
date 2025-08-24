@@ -30,17 +30,14 @@ type cartRepositorySuite struct {
 	container testcontainers.Container
 }
 
-// entry point to run the tests in the suite
 func TestCartRepositorySuite(t *testing.T) {
 	require.NoError(t, os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true"))
 
-	// Verifies no leaks after all tests in the suite run.
 	defer goleak.VerifyNone(t)
 
 	suite.Run(t, new(cartRepositorySuite))
 }
 
-// before all tests in the suite
 func (suite *cartRepositorySuite) SetupSuite() {
 	ctx := suite.T().Context()
 
@@ -55,11 +52,10 @@ func (suite *cartRepositorySuite) SetupSuite() {
 	suite.pool, err = pgxpool.New(ctx, connStr)
 	suite.NoError(err)
 
-	suite.repo = repository.NewCart(suite.pool)
+	suite.repo, err = repository.NewCart(suite.pool)
 	suite.NoError(err)
 }
 
-// after all tests in the suite
 func (suite *cartRepositorySuite) TearDownSuite() {
 	ctx := suite.T().Context()
 
@@ -95,7 +91,7 @@ func (suite *cartRepositorySuite) TestAddItem() {
 			item:    item2,
 		},
 		{
-			name:    "add item with same product ID (upsert): ok",
+			name:    "add item with same product ID: ok (upsert)",
 			ownerID: ownerID,
 			item:    item1,
 		},
@@ -119,11 +115,9 @@ func (suite *cartRepositorySuite) TestAddItem() {
 			}
 			require.NoError(t, err)
 
-			// Verify the item was added by getting the cart
 			cart, err := suite.repo.GetCart(ctx, tt.ownerID)
 			require.NoError(t, err)
 
-			// Find the item in the cart
 			found := false
 			for _, cartItem := range cart.Items {
 				if cartItem.ProductID == tt.item.ProductID {
@@ -145,33 +139,31 @@ func (suite *cartRepositorySuite) TestGetCart() {
 	item1 := fakeCartItem()
 	item2 := fakeCartItem()
 
-	// Add items to different carts
-	err := suite.repo.AddItem(suite.T().Context(), ownerID1, item1)
-	suite.NoError(err)
-	err = suite.repo.AddItem(suite.T().Context(), ownerID1, item2)
-	suite.NoError(err)
-	err = suite.repo.AddItem(suite.T().Context(), ownerID2, item1)
-	suite.NoError(err)
+	ctx := suite.T().Context()
+	require.NoError(suite.T(), suite.repo.AddItem(ctx, ownerID1, item1))
+	require.NoError(suite.T(), suite.repo.AddItem(ctx, ownerID1, item2))
+	require.NoError(suite.T(), suite.repo.AddItem(ctx, ownerID2, item1))
 
 	tests := []struct {
-		name        string
-		ownerID     string
-		wantItems   []domain.CartItem
-		wantError   string
+		name          string
+		ownerID       string
+		expectedItems int
+		wantError     string
 	}{
 		{
-			name:      "get cart with items: ok",
-			ownerID:   ownerID1,
-			wantItems: []domain.CartItem{item1, item2},
+			name:          "get cart with items: ok",
+			ownerID:       ownerID1,
+			expectedItems: 2,
 		},
 		{
-			name:      "get cart with single item: ok",
-			ownerID:   ownerID2,
-			wantItems: []domain.CartItem{item1},
+			name:          "get cart with one item: ok",
+			ownerID:       ownerID2,
+			expectedItems: 1,
 		},
 		{
-			name:    "get empty cart: ok",
-			ownerID: gofakeit.UUID(),
+			name:          "get empty cart: ok",
+			ownerID:       gofakeit.UUID(),
+			expectedItems: 0,
 		},
 		{
 			name:      "get cart with empty owner ID: error",
@@ -193,7 +185,11 @@ func (suite *cartRepositorySuite) TestGetCart() {
 			require.NoError(t, err)
 
 			assert.Equal(t, tt.ownerID, cart.OwnerID)
-			assertCartItems(t, tt.wantItems, cart.Items)
+			assert.Len(t, cart.Items, tt.expectedItems)
+
+			for _, item := range cart.Items {
+				assert.False(t, item.CreatedAt.IsZero())
+			}
 		})
 	}
 }
@@ -205,11 +201,9 @@ func (suite *cartRepositorySuite) TestDeleteItem() {
 	item1 := fakeCartItem()
 	item2 := fakeCartItem()
 
-	// Add items to cart
-	err := suite.repo.AddItem(suite.T().Context(), ownerID, item1)
-	suite.NoError(err)
-	err = suite.repo.AddItem(suite.T().Context(), ownerID, item2)
-	suite.NoError(err)
+	ctx := suite.T().Context()
+	require.NoError(suite.T(), suite.repo.AddItem(ctx, ownerID, item1))
+	require.NoError(suite.T(), suite.repo.AddItem(ctx, ownerID, item2))
 
 	tests := []struct {
 		name      string
@@ -231,7 +225,7 @@ func (suite *cartRepositorySuite) TestDeleteItem() {
 			wantFound: false,
 		},
 		{
-			name:      "delete item with empty owner ID: error",
+			name:      "delete with empty owner ID: error",
 			ownerID:   "",
 			productID: item1.ProductID,
 			wantError: "ownerID is empty",
@@ -253,13 +247,11 @@ func (suite *cartRepositorySuite) TestDeleteItem() {
 			assert.Equal(t, tt.wantFound, found)
 
 			if tt.wantFound {
-				// Verify the item was deleted by getting the cart
 				cart, err := suite.repo.GetCart(ctx, tt.ownerID)
 				require.NoError(t, err)
 
-				// Verify the item is not in the cart
-				for _, cartItem := range cart.Items {
-					assert.NotEqual(t, tt.productID, cartItem.ProductID, "Deleted item should not be in cart")
+				for _, item := range cart.Items {
+					assert.NotEqual(t, tt.productID, item.ProductID, "Deleted item should not be in cart")
 				}
 			}
 		})
@@ -274,7 +266,7 @@ func (suite *cartRepositorySuite) deleteAll() {
 func fakeCartItem() domain.CartItem {
 	productID := uuid.MustParse(gofakeit.UUID())
 	price := gofakeit.Price(1, 100)
-	currencyUnit := fakeCurrency()
+	currencyUnit := fakeCurrencyUnit()
 
 	return domain.CartItem{
 		ProductID: productID,
@@ -286,14 +278,13 @@ func fakeCartItem() domain.CartItem {
 	}
 }
 
-func fakeCurrency() currency.Unit {
+func fakeCurrencyUnit() currency.Unit {
 	var (
 		result currency.Unit
 		err    error
 	)
 
 	for {
-		// tag is not a recognized currency
 		result, err = currency.ParseISO(gofakeit.CurrencyShort())
 		if err == nil {
 			break
@@ -310,7 +301,6 @@ func assertCartItem(t *testing.T, expected domain.CartItem, actual domain.CartIt
 		return x.String() == y.String()
 	})
 
-	// Ignore the CreatedAt field
 	opts := cmp.Options{
 		cmpopts.IgnoreFields(domain.CartItem{}, "CreatedAt"),
 		currencyComparer,
@@ -322,7 +312,7 @@ func assertCartItem(t *testing.T, expected domain.CartItem, actual domain.CartIt
 	assert.False(t, actual.CreatedAt.IsZero())
 }
 
-func assertCartItems(t *testing.T, expected []domain.CartItem, actual []domain.CartItem) {
+func assertCart(t *testing.T, expected domain.Cart, actual domain.Cart) {
 	t.Helper()
 
 	sortCartItems := func(items []domain.CartItem) {
@@ -331,12 +321,16 @@ func assertCartItems(t *testing.T, expected []domain.CartItem, actual []domain.C
 		})
 	}
 
-	sortCartItems(expected)
-	sortCartItems(actual)
+	expectedCopy := expected
+	actualCopy := actual
 
-	require.Equal(t, len(expected), len(actual))
+	sortCartItems(expectedCopy.Items)
+	sortCartItems(actualCopy.Items)
 
-	for i := range expected {
-		assertCartItem(t, expected[i], actual[i])
+	assert.Equal(t, expectedCopy.OwnerID, actualCopy.OwnerID)
+	require.Equal(t, len(expectedCopy.Items), len(actualCopy.Items))
+
+	for i := range expectedCopy.Items {
+		assertCartItem(t, expectedCopy.Items[i], actualCopy.Items[i])
 	}
 }
