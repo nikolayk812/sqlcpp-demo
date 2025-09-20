@@ -19,6 +19,7 @@ func NewCart(dbtx db.DBTX) (port.CartRepository, error) {
 	if dbtx == nil {
 		return nil, fmt.Errorf("dbtx is nil")
 	}
+
 	return &cartRepository{
 		q:    db.New(dbtx),
 		dbtx: dbtx,
@@ -37,18 +38,15 @@ func (r *cartRepository) GetCart(ctx context.Context, ownerID string) (domain.Ca
 		return cart, fmt.Errorf("q.GetCart: %w", err)
 	}
 
-	cart.OwnerID = ownerID
-	cart.Items = make([]domain.CartItem, 0, len(rows))
-
-	for _, row := range rows {
-		item, err := mapGetCartRowToDomainCartItem(row)
-		if err != nil {
-			return cart, fmt.Errorf("mapGetCartRowToDomainCartItem: %w", err)
-		}
-		cart.Items = append(cart.Items, item)
+	items, err := mapGetCartRowsToDomain(rows)
+	if err != nil {
+		return cart, fmt.Errorf("mapGetCartRowsToDomain: %w", err)
 	}
 
-	return cart, nil
+	return domain.Cart{
+		OwnerID: ownerID,
+		Items:   items,
+	}, nil
 }
 
 func (r *cartRepository) AddItem(ctx context.Context, ownerID string, item domain.CartItem) error {
@@ -56,14 +54,12 @@ func (r *cartRepository) AddItem(ctx context.Context, ownerID string, item domai
 		return fmt.Errorf("ownerID is empty")
 	}
 
-	params := db.AddItemParams{
+	err := r.q.AddItem(ctx, db.AddItemParams{
 		OwnerID:       ownerID,
 		ProductID:     item.ProductID,
 		PriceAmount:   item.Price.Amount,
 		PriceCurrency: item.Price.Currency.String(),
-	}
-
-	err := r.q.AddItem(ctx, params)
+	})
 	if err != nil {
 		return fmt.Errorf("q.AddItem: %w", err)
 	}
@@ -76,12 +72,14 @@ func (r *cartRepository) DeleteItem(ctx context.Context, ownerID string, product
 		return false, fmt.Errorf("ownerID is empty")
 	}
 
-	params := db.DeleteItemParams{
-		OwnerID:   ownerID,
-		ProductID: productID,
+	if productID == uuid.Nil {
+		return false, fmt.Errorf("productID is empty")
 	}
 
-	rowsAffected, err := r.q.DeleteItem(ctx, params)
+	rowsAffected, err := r.q.DeleteItem(ctx, db.DeleteItemParams{
+		OwnerID:   ownerID,
+		ProductID: productID,
+	})
 	if err != nil {
 		return false, fmt.Errorf("q.DeleteItem: %w", err)
 	}
@@ -89,7 +87,21 @@ func (r *cartRepository) DeleteItem(ctx context.Context, ownerID string, product
 	return rowsAffected > 0, nil
 }
 
-func mapGetCartRowToDomainCartItem(row db.GetCartRow) (domain.CartItem, error) {
+func mapGetCartRowsToDomain(rows []db.GetCartRow) ([]domain.CartItem, error) {
+	var items []domain.CartItem
+
+	for _, row := range rows {
+		item, err := mapGetCartRowToDomain(row)
+		if err != nil {
+			return nil, fmt.Errorf("mapGetCartRowToDomain: %w", err)
+		}
+		items = append(items, item)
+	}
+
+	return items, nil
+}
+
+func mapGetCartRowToDomain(row db.GetCartRow) (domain.CartItem, error) {
 	parsedCurrency, err := currency.ParseISO(row.PriceCurrency)
 	if err != nil {
 		return domain.CartItem{}, fmt.Errorf("currency[%s] is not valid: %w", row.PriceCurrency, err)

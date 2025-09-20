@@ -12,7 +12,7 @@ domain models provided by a user and SQLC generated code.
 ### Building and Running
 
 - `go build .` - Build the whole project
-- `go test ./...` - Run all tests in the project
+- `make test` - Run all tests in the project
 - `gh api repos/nikolayk812/sqlcpp/contents/path/to/file.go --jq '.content' | base64 -d` - Fetch GitHub file content for https://github.com/nikolayk812/sqlcpp/blob/main/path/to/file.go)
 
 ### Code Generation
