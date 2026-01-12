@@ -14,4 +14,5 @@ Follow these steps:
 - Create file `internal/repository/"$ARGUMENTS"_repository.go` for generated implementation code, it has to satisfy the port interface defined in `internal/port/"$ARGUMENTS".go`. 
 - Add only direct dependencies from `https://github.com/nikolayk812/sqlcpp/blob/main/go.mod` to local `go.mod` file, if not yet present, run `go mod tidy`.
 - Make sure all generated files compile, run `go build ./...` to check, if not then fix compilation errors.
+- Run `goimports -w ./internal/repository/*.go` to organize imports in generated files the same way as GoLand.
 - Run `make test` to check if all tests pass, if not fix errors.
