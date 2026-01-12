@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allowed_tools": [
+      "bash",
+      "fetch",
+      "agentic_fetch",
+      "write",
+      "edit"
+    ]
+  }
+}
