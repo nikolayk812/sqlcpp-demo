@@ -36,18 +36,15 @@ func (r *cartRepository) GetCart(ctx context.Context, ownerID string) (domain.Ca
 		return cart, fmt.Errorf("q.GetCart: %w", err)
 	}
 
-	items := make([]domain.CartItem, 0, len(dbRows))
+	cart.OwnerID = ownerID
+	cart.Items = make([]domain.CartItem, 0, len(dbRows))
+
 	for _, row := range dbRows {
 		item, err := mapGetCartRowToDomainCartItem(row)
 		if err != nil {
 			return cart, fmt.Errorf("mapGetCartRowToDomainCartItem: %w", err)
 		}
-		items = append(items, item)
-	}
-
-	cart = domain.Cart{
-		OwnerID: ownerID,
-		Items:   items,
+		cart.Items = append(cart.Items, item)
 	}
 
 	return cart, nil
@@ -91,7 +88,10 @@ func mapGetCartRowToDomainCartItem(row db.GetCartRow) (domain.CartItem, error) {
 
 	return domain.CartItem{
 		ProductID: row.ProductID,
-		Price:     domain.Money{Amount: row.PriceAmount, Currency: parsedCurrency},
+		Price: domain.Money{
+			Amount:   row.PriceAmount,
+			Currency: parsedCurrency,
+		},
 		CreatedAt: row.CreatedAt,
 	}, nil
 }

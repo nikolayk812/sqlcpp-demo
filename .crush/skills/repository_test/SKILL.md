@@ -14,7 +14,7 @@ This skill provides guidance on testing repository implementations using real da
 - **Domain Model Focus**: Test with domain models only, never SQLC types
 - **One Assert Per Domain Model**: Create `assert[ModelName]` for EVERY domain model returned by repository methods (e.g., `assertCart`, `assertOrder`)
 - **Mandatory Custom Assertions**: Compare all fields except generated ones (ID, timestamps). NEVER use `assert.Equal` on individual model fields
-- **Comprehensive Error Coverage**: Test validation, not found, and state-dependent errors using `prepareFunc` patterns
+- **Comprehensive Error Coverage**: Test validation, not found, and state-dependent errors using `arrangeState` patterns
 - **Table-Driven Structure**: Organize with clear test scenarios and expected outcomes
 - **Consistent Cleanup**: Use `defer suite.deleteAll()` once per test method, never per test case
 
@@ -32,17 +32,17 @@ type repositorySuite struct {
 ### Table-Driven Tests
 ```go
 tests := []struct {
-    name         string
-    inputFunc    func() domain.Model
-    prepareFunc  func(uuid.UUID) error  // optional setup
-    targetIDFunc func() uuid.UUID       // optional ID override
-    wantError    string
+name         string
+buildModel   func() domain.Model
+arrangeState func(uuid.UUID) error  // arrange state for test case before the operation
+useModelID   func() uuid.UUID       // override which model ID to use, if nil use the inserted one
+wantError    string
 }{
-    // Must test ALL error categories:
-    {name: "valid input: ok", inputFunc: randomModel},
-    {name: "empty id: error", targetIDFunc: func() uuid.UUID { return uuid.Nil }, wantError: "id is empty"},
-    {name: "non-existing: not found", targetIDFunc: randomUUID, wantError: "q.Method: record not found"},
-    {name: "soft-deleted: not found", prepareFunc: softDelete, wantError: "q.Method: record not found"},
+// Must test ALL error categories:
+{name: "valid input: ok", buildModel: randomModel},
+{name: "empty id: error", useModelID: func() uuid.UUID { return uuid.Nil }, wantError: "id is empty"},
+{name: "non-existing: not found", useModelID: randomUUID, wantError: "q.Method: record not found"},
+{name: "soft-deleted: not found", arrangeState: softDelete, wantError: "q.Method: record not found"},
 }
 ```
 
@@ -60,12 +60,12 @@ assertCart(t, expected, actual)                     // ✅ REQUIRED
 ```go
 // MUST create for every domain model - compare ALL fields except generated ones
 func assertModel(t *testing.T, expected, actual domain.Model) {
-    opts := cmp.Options{
-        cmpopts.IgnoreFields(domain.Model{}, "CreatedAt", "UpdatedAt", "ID"),
-        customComparers,
-    }
-    assert.Empty(t, cmp.Diff(expected, actual, opts))
-    assert.False(t, actual.CreatedAt.IsZero())
+opts := cmp.Options{
+cmpopts.IgnoreFields(domain.Model{}, "CreatedAt", "UpdatedAt", "ID"),
+customComparers,
+}
+assert.Empty(t, cmp.Diff(expected, actual, opts))
+assert.False(t, actual.CreatedAt.IsZero())
 }
 ```
 

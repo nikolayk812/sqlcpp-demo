@@ -5,14 +5,15 @@ This file provides comprehensive guidance for AI agents working with this Go-bas
 ## Current State
 
 The repository currently contains:
-- Domain models for `Cart` and `Money` entities
-- Port interface (`CartRepository`) defining repository methods
-- SQL queries for cart operations in SQLC format
-- Database schema migration for cart_items table
+- Domain models in `internal/domain/` (business entities with value objects)
+- Port interfaces in `internal/port/` (repository interface definitions)
+- SQL queries in `internal/db/queries/` for SQLC code generation
+- Database schema migrations in `internal/migrations/`
 - Complete SQLC configuration with type mappings
-- **No generated repository files yet** - use `/generate-repository cart` to create them
+- Repository skill for guided implementation in `.crush/skills/repository/`
+- **Generated repository files were deleted** - use `/generate-repository <domain>` to generate them
 
-The `internal/repository/` and `internal/db/` directories are currently empty of Go files.
+The `internal/repository/` and `internal/db/` directories are currently empty of Go files after cleanup.
 
 **Key Technologies:**
 - Go 1.25
@@ -20,6 +21,16 @@ The `internal/repository/` and `internal/db/` directories are currently empty of
 - PostgreSQL with pgx/v5 driver
 - Testcontainers for integration testing
 - Domain-driven design with hexagonal architecture
+- Crush AI Assistant with repository skill for guided code generation
+
+## Current Workflow
+
+After cleanup, the recommended workflow is:
+
+1. **Regenerate Repository Code**: Run `/generate-repository <domain>` to create repository files for any domain model
+2. **Verify Generation**: Check that files are created in `internal/db/` and `internal/repository/`
+3. **Build and Test**: Ensure `go build ./...` succeeds and `make test` passes
+4. **Clean Dependencies**: Run `go mod tidy` to remove unused dependencies
 
 ## Essential Commands
 
@@ -53,6 +64,9 @@ gh api -H "Accept: application/vnd.github.raw" repos/nikolayk812/sqlcpp/contents
 
 ### Directory Structure
 ```
+.crush/
+└── skills/
+    └── repository/        # Repository implementation skill and guidance
 internal/
 ├── domain/            # Business models/entities (Cart, Money)
 ├── port/              # Repository interfaces (hexagonal architecture ports)
@@ -67,13 +81,12 @@ internal/
 **Domain Layer (`internal/domain/`)**
 - Contains pure business logic and entities
 - No dependencies on persistence or external concerns
-- Examples: `Cart`, `Money` structs
-- Uses value objects (Money with decimal.Decimal and currency.Unit)
+- Uses value objects with proper type safety (e.g., Money with decimal.Decimal and currency.Unit)
 
 **Port Layer (`internal/port/`)**  
 - Defines repository interfaces
 - Follows hexagonal architecture port concept
-- Interface naming: `<Domain>Repository` (e.g., `CartRepository`)
+- Interface naming: `<Domain>Repository` pattern
 
 **Database Layer (`internal/db/`)**
 - Contains SQLC-generated code
@@ -89,9 +102,14 @@ internal/
 
 **Migration Layer (`internal/migrations/`)**
 - SQL schema migration files
-- Named with incrementing numbers: `01_cart_items.up.sql`
+- Named with incrementing numbers: `01_<table_name>.up.sql`
 - Used by SQLC to understand database schema
 - Applied automatically in test setup
+
+**Skill Layer (`.crush/skills/repository/`)**
+- Contains repository implementation guidance and patterns
+- Provides structured approach to implementing repository layer
+- Includes mapping conventions, transaction handling, and error patterns
 
 ## Development Patterns
 
@@ -166,11 +184,11 @@ golang.org/x/text                   # Currency handling
 ## Coding Conventions
 
 ### Naming Conventions
-- Domain models: PascalCase (`Cart`, `CartItem`)
+- Domain models: PascalCase (e.g., `Order`, `Product`)
 - Repository interfaces: `<Domain>Repository`
 - Repository implementations: `<domain>Repository` 
 - Test files: `<domain>_repository_test.go`
-- SQL files: lowercase with underscores (`cart.sql`)
+- SQL files: lowercase with underscores (e.g., `order.sql`)
 
 ### Code Style
 - Use Go standard formatting (gofmt)
@@ -179,10 +197,10 @@ golang.org/x/text                   # Currency handling
 - Context: always accept `context.Context` as first parameter in repository methods
 
 ### Database Conventions
-- Table names: snake_case (`cart_items`)
-- Column names: snake_case (`owner_id`, `product_id`)  
-- Primary keys: composite where logical (`owner_id, product_id`)
-- Indexes: descriptive names (`idx_cart_items_owner`)
+- Table names: snake_case (e.g., `order_items`)
+- Column names: snake_case (e.g., `owner_id`, `product_id`)  
+- Primary keys: composite where logical (e.g., `owner_id, product_id`)
+- Indexes: descriptive names (e.g., `idx_order_items_owner`)
 - Timestamps: use `TIMESTAMP DEFAULT CURRENT_TIMESTAMP`
 
 ## Special Commands and Workflows
@@ -200,15 +218,31 @@ This command (defined in `.claude/commands/generate-repository.md`):
 4. Creates or modifies `internal/repository/repository_test.go` for testcontainer setup
 5. Creates `internal/repository/{domain}_repository_test.go` for integration tests
 6. Creates `internal/repository/{domain}_repository.go` for implementation
-7. Ensures compilation with `go build ./...`
-8. Verifies tests pass with `make test`
-9. References implementation patterns from main sqlcpp repo
+7. Organizes imports with `goimports`
+8. Ensures compilation with `go build ./...`
+9. Verifies tests pass with `make test`
+10. References implementation patterns from main sqlcpp repo
+
+### Skill-Based Implementation
+The repository skill (`.crush/skills/repository/`) provides:
+- Core principles for repository implementation
+- Constructor patterns and method structures
+- Transaction handling guidance
+- Error handling patterns
+- Mapping conventions between SQLC records and domain models
 
 ### GitHub Reference Files
 The project references implementation patterns from:
 - `https://github.com/nikolayk812/sqlcpp/blob/main/internal/repository/repository_test.go`
 - `https://github.com/nikolayk812/sqlcpp/blob/main/internal/repository/order_repository.go`
 - `https://github.com/nikolayk812/sqlcpp/blob/main/internal/repository/order_repository_test.go`
+
+### Repository Skill
+Access the repository skill for guided implementation:
+- File: `.crush/skills/repository/SKILL.md`
+- Provides step-by-step guidance for implementing repositories
+- Includes mapping conventions and error handling patterns
+- Follows hexagonal architecture principles
 
 ## Common Gotchas
 
