@@ -2,15 +2,17 @@ package repository_test
 
 import (
 	"testing"
-	"time"
 
 	"github.com/brianvoe/gofakeit/v7"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nikolayk812/sqlcpp-demo/internal/domain"
 	"github.com/nikolayk812/sqlcpp-demo/internal/port"
 	"github.com/nikolayk812/sqlcpp-demo/internal/repository"
 	"github.com/shopspring/decimal"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"golang.org/x/text/currency"
@@ -49,90 +51,56 @@ func (suite *cartRepositorySuite) TearDownSuite() {
 	}
 }
 
-func (suite *cartRepositorySuite) TestGetCart() {
-	defer suite.deleteAll()
-
-	tests := []struct {
-		name      string
-		setupFunc func() string
-		wantItems int
-	}{
-		{
-			name: "empty cart: ok",
-			setupFunc: func() string {
-				return gofakeit.UUID()
-			},
-			wantItems: 0,
-		},
-		{
-			name: "cart with single item: ok",
-			setupFunc: func() string {
-				ownerID := gofakeit.UUID()
-				item := randomCartItem()
-				err := suite.repo.AddItem(suite.T().Context(), ownerID, item)
-				suite.NoError(err)
-				return ownerID
-			},
-			wantItems: 1,
-		},
-		{
-			name: "cart with multiple items: ok",
-			setupFunc: func() string {
-				ownerID := gofakeit.UUID()
-				for i := range 3 {
-					_ = i
-					item := randomCartItem()
-					err := suite.repo.AddItem(suite.T().Context(), ownerID, item)
-					suite.NoError(err)
-				}
-				return ownerID
-			},
-			wantItems: 3,
-		},
-	}
-
-	for _, tt := range tests {
-		suite.Run(tt.name, func() {
-			t := suite.T()
-			ctx := t.Context()
-
-			ownerID := tt.setupFunc()
-
-			cart, err := suite.repo.GetCart(ctx, ownerID)
-			require.NoError(t, err)
-
-			require.Equal(t, ownerID, cart.OwnerID)
-			require.Len(t, cart.Items, tt.wantItems)
-
-			// Verify each item has required fields
-			for _, item := range cart.Items {
-				require.NotEqual(t, uuid.Nil, item.ProductID)
-				require.True(t, item.Price.Amount.GreaterThan(decimal.Zero))
-				require.NotEmpty(t, item.Price.Currency.String())
-				require.False(t, item.CreatedAt.IsZero())
-			}
-		})
-	}
-}
-
 func (suite *cartRepositorySuite) TestAddItem() {
 	defer suite.deleteAll()
 
 	tests := []struct {
 		name      string
-		ownerID   string
-		item      domain.CartItem
+		itemFunc  func() (string, domain.CartItem)
 		wantError string
 	}{
 		{
-			name:    "add new item: ok",
-			ownerID: gofakeit.UUID(),
-			item:    randomCartItem(),
+			name:     "valid cart item: ok",
+			itemFunc: randomCartItem,
 		},
 		{
-			name:    "add item with same product (upsert): ok",
-			ownerID: gofakeit.UUID(),
-			item:    randomCartItem(),
+			name: "empty owner ID: error",
+			itemFunc: func() (string, domain.CartItem) {
+				_, item := randomCartItem()
+				return "", item
+			},
+			wantError: "ownerID is empty",
+		},
+		{
+			name: "nil product ID: error",
+			itemFunc: func() (string, domain.CartItem) {
+				ownerID, item := randomCartItem()
+				item.ProductID = uuid.Nil
+				return ownerID, item
+			},
+			wantError: "item.ProductID is empty",
+		},
+		{
+			name: "zero price amount: ok",
+			itemFunc: func() (string, domain.CartItem) {
+				ownerID, item := randomCartItem()
+				item.Price.Amount = decimal.Zero
+				return ownerID, item
+			},
+		},
+		{
+			name: "upsert existing item: ok",
+			itemFunc: func() (string, domain.CartItem) {
+				ownerID, item := randomCartItem()
+				// First, add the item
+				ctx := suite.T().Context()
+				err := suite.repo.AddItem(ctx, ownerID, item)
+				suite.NoError(err)
+
+				// Now return the same item with different price for upsert
+				item.Price.Amount = decimal.NewFromFloat(99.99)
+				return ownerID, item
+			},
 		},
 	}
 
@@ -141,31 +109,95 @@ func (suite *cartRepositorySuite) TestAddItem() {
 			t := suite.T()
 			ctx := t.Context()
 
-			// For upsert test, add the item first
-			if tt.name == "add item with same product (upsert): ok" {
-				err := suite.repo.AddItem(ctx, tt.ownerID, tt.item)
-				require.NoError(t, err)
+			ownerID, ttItem := tt.itemFunc()
 
-				// Update the price for upsert test
-				tt.item.Price.Amount = decimal.NewFromFloat(999.99)
-			}
-
-			err := suite.repo.AddItem(ctx, tt.ownerID, tt.item)
+			err := suite.repo.AddItem(ctx, ownerID, ttItem)
 			if tt.wantError != "" {
 				require.EqualError(t, err, tt.wantError)
 				return
 			}
 			require.NoError(t, err)
 
-			// Verify the item was added
-			cart, err := suite.repo.GetCart(ctx, tt.ownerID)
+			// Verify the item was added by getting the cart
+			actualCart, err := suite.repo.GetCart(ctx, ownerID)
 			require.NoError(t, err)
 
-			require.Len(t, cart.Items, 1)
-			item := cart.Items[0]
-			require.Equal(t, tt.item.ProductID, item.ProductID)
-			require.True(t, tt.item.Price.Amount.Equal(item.Price.Amount))
-			require.Equal(t, tt.item.Price.Currency, item.Price.Currency)
+			require.Len(t, actualCart.Items, 1)
+			assertCartItem(t, ttItem, actualCart.Items[0])
+		})
+	}
+}
+
+func (suite *cartRepositorySuite) TestGetCart() {
+	defer suite.deleteAll()
+
+	tests := []struct {
+		name      string
+		setupFunc func() (string, []domain.CartItem)
+		wantError string
+	}{
+		{
+			name: "cart with multiple items: ok",
+			setupFunc: func() (string, []domain.CartItem) {
+				ownerID := gofakeit.UUID()
+				items := []domain.CartItem{
+					randomCartItemForOwner(ownerID).item,
+					randomCartItemForOwner(ownerID).item,
+					randomCartItemForOwner(ownerID).item,
+				}
+
+				ctx := suite.T().Context()
+				for _, item := range items {
+					err := suite.repo.AddItem(ctx, ownerID, item)
+					suite.NoError(err)
+				}
+
+				return ownerID, items
+			},
+		},
+		{
+			name: "empty cart: ok",
+			setupFunc: func() (string, []domain.CartItem) {
+				return gofakeit.UUID(), nil
+			},
+		},
+		{
+			name: "empty owner ID: error",
+			setupFunc: func() (string, []domain.CartItem) {
+				return "", nil
+			},
+			wantError: "ownerID is empty",
+		},
+	}
+
+	for _, tt := range tests {
+		suite.Run(tt.name, func() {
+			t := suite.T()
+			ctx := t.Context()
+
+			ownerID, expectedItems := tt.setupFunc()
+
+			actualCart, err := suite.repo.GetCart(ctx, ownerID)
+			if tt.wantError != "" {
+				require.EqualError(t, err, tt.wantError)
+				return
+			}
+			require.NoError(t, err)
+
+			assert.Equal(t, ownerID, actualCart.OwnerID)
+			require.Len(t, actualCart.Items, len(expectedItems))
+
+			// Sort items by ProductID for consistent comparison
+			expectedMap := make(map[uuid.UUID]domain.CartItem)
+			for _, item := range expectedItems {
+				expectedMap[item.ProductID] = item
+			}
+
+			for _, actualItem := range actualCart.Items {
+				expectedItem, exists := expectedMap[actualItem.ProductID]
+				require.True(t, exists, "unexpected item in cart: %v", actualItem.ProductID)
+				assertCartItem(t, expectedItem, actualItem)
+			}
 		})
 	}
 }
@@ -174,43 +206,46 @@ func (suite *cartRepositorySuite) TestDeleteItem() {
 	defer suite.deleteAll()
 
 	tests := []struct {
-		name         string
-		setupFunc    func() (string, uuid.UUID)
-		targetIDFunc func(string, uuid.UUID) (string, uuid.UUID) // modify owner/product IDs for test
-		wantDeleted  bool
-		wantError    string
+		name        string
+		setupFunc   func() (string, uuid.UUID, bool) // returns ownerID, productID, expectSuccess
+		wantError   string
+		wantDeleted bool
 	}{
 		{
 			name: "delete existing item: ok",
-			setupFunc: func() (string, uuid.UUID) {
-				ownerID := gofakeit.UUID()
-				item := randomCartItem()
-				err := suite.repo.AddItem(suite.T().Context(), ownerID, item)
+			setupFunc: func() (string, uuid.UUID, bool) {
+				ownerID, item := randomCartItem()
+				ctx := suite.T().Context()
+				err := suite.repo.AddItem(ctx, ownerID, item)
 				suite.NoError(err)
-				return ownerID, item.ProductID
+				return ownerID, item.ProductID, true
 			},
 			wantDeleted: true,
 		},
 		{
-			name: "delete non-existing item: ok but not deleted",
-			setupFunc: func() (string, uuid.UUID) {
-				return gofakeit.UUID(), uuid.MustParse(gofakeit.UUID())
+			name: "delete non-existing item: false",
+			setupFunc: func() (string, uuid.UUID, bool) {
+				ownerID := gofakeit.UUID()
+				productID := uuid.MustParse(gofakeit.UUID())
+				return ownerID, productID, false
 			},
 			wantDeleted: false,
 		},
 		{
-			name: "delete item with wrong owner: ok but not deleted",
-			setupFunc: func() (string, uuid.UUID) {
+			name: "empty owner ID: error",
+			setupFunc: func() (string, uuid.UUID, bool) {
+				productID := uuid.MustParse(gofakeit.UUID())
+				return "", productID, false
+			},
+			wantError: "ownerID is empty",
+		},
+		{
+			name: "nil product ID: error",
+			setupFunc: func() (string, uuid.UUID, bool) {
 				ownerID := gofakeit.UUID()
-				item := randomCartItem()
-				err := suite.repo.AddItem(suite.T().Context(), ownerID, item)
-				suite.NoError(err)
-				return ownerID, item.ProductID
+				return ownerID, uuid.Nil, false
 			},
-			targetIDFunc: func(ownerID string, productID uuid.UUID) (string, uuid.UUID) {
-				return gofakeit.UUID(), productID // wrong owner
-			},
-			wantDeleted: false,
+			wantError: "productID is empty",
 		},
 	}
 
@@ -219,33 +254,25 @@ func (suite *cartRepositorySuite) TestDeleteItem() {
 			t := suite.T()
 			ctx := t.Context()
 
-			ownerID, productID := tt.setupFunc()
+			ownerID, productID, _ := tt.setupFunc()
 
-			targetOwnerID, targetProductID := ownerID, productID
-			if tt.targetIDFunc != nil {
-				targetOwnerID, targetProductID = tt.targetIDFunc(ownerID, productID)
-			}
-
-			deleted, err := suite.repo.DeleteItem(ctx, targetOwnerID, targetProductID)
+			deleted, err := suite.repo.DeleteItem(ctx, ownerID, productID)
 			if tt.wantError != "" {
 				require.EqualError(t, err, tt.wantError)
 				return
 			}
 			require.NoError(t, err)
-			require.Equal(t, tt.wantDeleted, deleted)
 
-			// Verify the item was deleted (or not)
-			cart, err := suite.repo.GetCart(ctx, ownerID)
-			require.NoError(t, err)
+			assert.Equal(t, tt.wantDeleted, deleted)
 
+			// Verify the item was actually deleted by checking the cart
 			if tt.wantDeleted {
-				require.Empty(t, cart.Items)
-			} else if tt.targetIDFunc == nil {
-				// If we tried to delete non-existing, cart should still be empty
-				require.Empty(t, cart.Items)
-			} else {
-				// If we tried to delete with wrong owner, item should still exist
-				require.Len(t, cart.Items, 1)
+				cart, err := suite.repo.GetCart(ctx, ownerID)
+				require.NoError(t, err)
+
+				for _, item := range cart.Items {
+					assert.NotEqual(t, productID, item.ProductID, "item should have been deleted")
+				}
 			}
 		})
 	}
@@ -256,17 +283,30 @@ func (suite *cartRepositorySuite) deleteAll() {
 	suite.NoError(err)
 }
 
-func randomCartItem() domain.CartItem {
+func randomCartItem() (string, domain.CartItem) {
+	ownerID := gofakeit.UUID()
+	return randomCartItemForOwner(ownerID).ownerID, randomCartItemForOwner(ownerID).item
+}
+
+type cartItemPair struct {
+	ownerID string
+	item    domain.CartItem
+}
+
+func randomCartItemForOwner(ownerID string) cartItemPair {
+	productID := uuid.MustParse(gofakeit.UUID())
 	price := gofakeit.Price(1, 1000)
 	currencyUnit := randomCurrency()
 
-	return domain.CartItem{
-		ProductID: uuid.MustParse(gofakeit.UUID()),
-		Price: domain.Money{
-			Amount:   decimal.NewFromFloat(price),
-			Currency: currencyUnit,
+	return cartItemPair{
+		ownerID: ownerID,
+		item: domain.CartItem{
+			ProductID: productID,
+			Price: domain.Money{
+				Amount:   decimal.NewFromFloat(price),
+				Currency: currencyUnit,
+			},
 		},
-		CreatedAt: time.Now(), // This will be overridden by database
 	}
 }
 
@@ -285,4 +325,23 @@ func randomCurrency() currency.Unit {
 	}
 
 	return result
+}
+
+func assertCartItem(t *testing.T, expected, actual domain.CartItem) {
+	t.Helper()
+
+	currencyComparer := cmp.Comparer(func(x, y currency.Unit) bool {
+		return x.String() == y.String()
+	})
+
+	// Ignore the CreatedAt field since it's set by the database
+	opts := cmp.Options{
+		cmpopts.IgnoreFields(domain.CartItem{}, "CreatedAt"),
+		currencyComparer,
+	}
+
+	diff := cmp.Diff(expected, actual, opts)
+	assert.Empty(t, diff)
+
+	assert.False(t, actual.CreatedAt.IsZero(), "CreatedAt should be set")
 }

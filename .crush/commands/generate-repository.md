@@ -2,6 +2,8 @@ Generate repository file and integration tests file for domain model: $ARGUMENTS
 
 Context = agentic tool context. Content = full content of a file.
 
+You can use repository skill.
+
 Follow these steps:
 
 - Run `sqlc generate` command to generate the SQLC code in `internal/db/` directory. 

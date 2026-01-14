@@ -7,5 +7,10 @@
       "write",
       "edit"
     ]
+  },
+  "options": {
+    "skills_paths": [
+      "./.crush/skills"
+    ]
   }
 }

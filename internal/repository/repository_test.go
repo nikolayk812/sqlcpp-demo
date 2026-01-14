@@ -8,10 +8,9 @@ import (
 )
 
 func startPostgres(ctx context.Context) (*postgres.PostgresContainer, string, error) {
-	postgresContainer, err := postgres.Run(ctx, "postgres:17.6-alpine3.22",
+	postgresContainer, err := postgres.Run(ctx, "postgres:17.7-alpine3.23",
 		postgres.BasicWaitStrategies(),
-		postgres.WithInitScripts(
-			"../migrations/01_cart_items.up.sql"),
+		postgres.WithInitScripts("../migrations/01_cart_items.up.sql"),
 	)
 	if err != nil {
 		return nil, "", fmt.Errorf("postgres.Run: %w", err)
