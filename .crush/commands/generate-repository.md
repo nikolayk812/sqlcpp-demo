@@ -2,7 +2,7 @@ Generate repository file and integration tests file for domain model: $ARGUMENTS
 
 Context = agentic tool context. Content = full content of a file.
 
-You can use repository skill.
+You can use `repository` and `repository-test` skills.
 
 Follow these steps:
 
